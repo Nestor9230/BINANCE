@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Panel Cripto - Velas con Proxy Binance</title>
+  <title>Panel Cripto - Velas híbrido Binance</title>
 
   <!-- Chart.js + plugin financial -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
@@ -40,6 +40,37 @@
     .muted{color:#9aa4bf;font-size:13px}
     #errorBox{margin-top:10px;padding:8px;border:1px solid #ff5c5c;border-radius:6px;
       color:#ff5c5c;font-size:13px;max-height:100px;overflow:auto;white-space:pre-line;}
+
+    /* Toasts flotantes */
+    #toastContainer {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 10000;
+    }
+    .toast {
+      min-width: 220px;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: bold;
+      box-shadow: 0 4px 12px rgba(0,0,0,.3);
+      opacity: 0;
+      transform: translateX(100%);
+      animation: slideIn 0.4s forwards, fadeOut 0.5s forwards 4.5s;
+    }
+    .toast.buy { background: #2ea043; color: white; }
+    .toast.sell { background: #d73a49; color: white; }
+    @keyframes slideIn {
+      from {opacity:0; transform:translateX(100%);}
+      to {opacity:1; transform:translateX(0);}
+    }
+    @keyframes fadeOut {
+      to {opacity:0; transform:translateX(100%);}
+    }
   </style>
 </head>
 <body>
@@ -100,6 +131,7 @@
   </div>
 
   <div id="statusIndicator" class="offline">🔴 Desconectado</div>
+  <div id="toastContainer"></div>
 
   <script defer>
     const $=id=>document.getElementById(id);
@@ -116,6 +148,14 @@
       box.innerText=`[${t}] ${msg}\n`+box.innerText;
     }
 
+    function showToast(msg,type){
+      const toast=document.createElement('div');
+      toast.className=`toast ${type}`;
+      toast.textContent=msg;
+      $('toastContainer').appendChild(toast);
+      setTimeout(()=>toast.remove(),5000);
+    }
+
     function setStatus(state,text){
       const el=$('statusIndicator');
       if(state==='online'){el.className='online';el.textContent='🟢 Conectado';$('statusText').textContent='Estado: Conectado';}
@@ -124,7 +164,6 @@
       if(text)$('lastPriceMini').textContent='Precio: '+text;
     }
 
-    // 🚀 Ahora con proxy CORS
     async function fetchKlines(sym,intv){
       const endpoints = [
         "https://api.binance.com",
@@ -161,10 +200,7 @@
         ]},
         options:{
           plugins:{legend:{labels:{color:'#e6edf3'}}},
-          scales:{
-            x:{type:'time',ticks:{color:'#aaa'}},
-            y:{ticks:{color:'#aaa'}}
-          }
+          scales:{x:{type:'time',ticks:{color:'#aaa'}},y:{ticks:{color:'#aaa'}}}
         }
       });
     }
@@ -173,19 +209,26 @@
     async function start(sym,intv){
       if(ws){try{ws.close();}catch{} ws=null;}
       setStatus('connecting');
-      try{
-        const data=await fetchKlines(sym,intv);
-        candles=data.map(k=>({x:new Date(k[0]),o:+k[1],h:+k[2],l:+k[3],c:+k[4]}));
-        closes=data.map(k=>+k[4]);
-        buySignals=[];sellSignals=[];
-        initChart();updateChart();
-        openWS(sym,intv);
-      }catch(err){
-        log("Error histórico: "+err.message);
-        showError("Error histórico: "+err.message);
-        setStatus('offline');
+      try {
+        const data = await fetchKlines(sym,intv);
+        if (data && data.length) {
+          candles = data.map(k=>({x:new Date(k[0]),o:+k[1],h:+k[2],l:+k[3],c:+k[4]}));
+          closes = data.map(k=>+k[4]);
+          log("Histórico cargado: "+data.length+" velas");
+        } else {
+          candles = []; closes = [];
+          showError("Histórico vacío, esperando velas en vivo...");
+        }
+      } catch(err) {
+        candles = []; closes = [];
+        log("Histórico no disponible, iniciando solo con WS");
+        showError("Histórico no disponible, esperando velas en vivo...");
       }
+      buySignals=[]; sellSignals=[];
+      initChart(); updateChart();
+      openWS(sym,intv);
     }
+
     function openWS(sym,intv){
       ws=new WebSocket(`wss://stream.binance.com:9443/ws/${sym.toLowerCase()}@kline_${intv}`);
       ws.onopen=()=>{log('WS conectado');setStatus('online',closes.at(-1));};
@@ -193,6 +236,7 @@
       ws.onerror=e=>{showError("Error WS: "+e.message);};
       ws.onmessage=e=>{const k=JSON.parse(e.data).k;if(!k)return;handleKline(k);};
     }
+
     function handleKline(k){
       const c={x:new Date(k.t),o:+k.o,h:+k.h,l:+k.l,c:+k.c};
       if(lastKlineStart===null||k.t!==lastKlineStart){lastKlineStart=k.t;candles.push(c);closes.push(c.c);}else{candles[candles.length-1]=c;closes[closes.length-1]=c.c;}
@@ -218,8 +262,20 @@
     $('connectBtn').onclick=()=>start($('symbolSelect').value,$('interval').value);
     $('trmInput').oninput=()=>{localStorage.setItem('trmValue',$('trmInput').value);updateCalc();};
     $('copAmount').oninput=updateCalc;$('entryPrice').oninput=updateCalc;
-    $('manualBuyBtn').onclick=()=>{buySignals.push({x:candles.at(-1).x,y:candles.at(-1).c});log('📢 Alerta MANUAL COMPRA');updateChart();};
-    $('manualSellBtn').onclick=()=>{sellSignals.push({x:candles.at(-1).x,y:candles.at(-1).c});log('🚨 Alerta MANUAL VENTA');updateChart();};
+
+    $('manualBuyBtn').onclick=()=>{
+      buySignals.push({x:candles.at(-1).x,y:candles.at(-1).c});
+      log('📢 Alerta MANUAL COMPRA');
+      updateChart();
+      showToast("📢 Señal de COMPRA", "buy");
+    };
+
+    $('manualSellBtn').onclick=()=>{
+      sellSignals.push({x:candles.at(-1).x,y:candles.at(-1).c});
+      log('🚨 Alerta MANUAL VENTA');
+      updateChart();
+      showToast("🚨 Señal de VENTA", "sell");
+    };
 
     // Inicializar lista
     SYMBOLS.forEach(s=>{
