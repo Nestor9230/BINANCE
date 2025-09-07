@@ -28,6 +28,8 @@
     #statusIndicator.offline{background:#f85149;color:#fff;}
     .calc-result{margin-top:8px;font-size:13px;}
     #log{height:120px;overflow-y:auto;background:#0d1117;padding:5px;border:1px solid #30363d;font-size:12px;}
+    .sim-box{margin-bottom:6px;border-bottom:1px solid #30363d;padding-bottom:4px;}
+    .sim-delete{background:#f85149;color:white;border:none;border-radius:4px;padding:2px 6px;cursor:pointer;font-size:11px;float:right;}
   </style>
 </head>
 <body>
@@ -40,9 +42,10 @@
       <select id="symbolSelect"></select>
       <label>Intervalo</label>
       <select id="intervalSelect">
-        <option value="1m">1m</option>
-        <option value="5m">5m</option>
-        <option value="15m">15m</option>
+        <option value="1">1s</option>
+        <option value="2">2s</option>
+        <option value="5">5s</option>
+        <option value="10">10s</option>
       </select>
       <button id="connectBtn">Conectar</button>
       <div style="margin-left:auto;text-align:right;font-size:13px;">
@@ -63,11 +66,8 @@
 
     <h3>Simulación de inversión</h3>
     <button id="simulateBtn">💰 Simular compra</button>
+    <button id="downloadBtn">⬇️ Descargar CSV</button>
     <div id="simList" class="calc-result">No hay simulaciones</div>
-
-    <h3>Alertas manuales</h3>
-    <button id="markBuy">📢 Marcar COMPRA</button>
-    <button id="markSell">📢 Marcar VENTA</button>
 
     <h3>Registro</h3>
     <div id="log"></div>
@@ -78,10 +78,19 @@
 
 <script defer>
 const $=id=>document.getElementById(id);
-let ws,lastPrice,chart,candles=[],closes=[],buySignals=[],sellSignals=[];
+let ws,lastPrice,chart,candles=[],closes=[];
 let simulaciones = JSON.parse(localStorage.getItem("simulaciones") || "[]");
 
+// Colores para líneas de simulaciones
+const COLORS=["#ff6384","#36a2eb","#cc65fe","#ffce56","#4bc0c0","#9966ff","#ff9f40","#8bc34a","#e91e63","#00bcd4"];
+
 const SYMBOLS=["BTCUSDT","ETHUSDT","BNBUSDT","XRPUSDT","LTCUSDT"];
+SYMBOLS.forEach(s=>{
+  const o=document.createElement("option");
+  o.value=s;o.textContent=s;
+  $("symbolSelect").appendChild(o);
+});
+$("symbolSelect").value="BTCUSDT";
 
 function log(msg){
   const time=new Date().toLocaleTimeString();
@@ -105,71 +114,86 @@ function setStatus(st){
   }
 }
 
-// Inicializar lista de símbolos
-SYMBOLS.forEach(s=>{
-  const o=document.createElement("option");
-  o.value=s;o.textContent=s;
-  $("symbolSelect").appendChild(o);
-});
-$("symbolSelect").value="BTCUSDT";
-
-// Crear gráfico
 function initChart(){
   if(chart) chart.destroy();
   const ctx=$("chart").getContext("2d");
   chart=new Chart(ctx,{
     type:"candlestick",
-    data:{datasets:[
-      {label:"Candlestick",data:candles},
-      {label:"Compra",data:buySignals,type:"scatter",showLine:false,pointStyle:"triangle",rotation:0,pointRadius:10,borderColor:"green",backgroundColor:"green"},
-      {label:"Venta",data:sellSignals,type:"scatter",showLine:false,pointStyle:"triangle",rotation:180,pointRadius:10,borderColor:"red",backgroundColor:"red"}
-    ]},
+    data:{datasets:[{label:"Candlestick",data:candles}]},
     options:{
       plugins:{legend:{labels:{color:"#e6edf3"}}},
       scales:{x:{type:"time",ticks:{color:"#aaa"}},y:{ticks:{color:"#aaa"}}}
     }
   });
 }
-
 function updateChart(){
   chart.data.datasets[0].data=candles;
+  chart.data.datasets = chart.data.datasets.slice(0,1);
+  simulaciones.forEach((sim,i)=>{
+    chart.data.datasets.push({
+      label:`Sim ${i+1} (${sim.entry.toFixed(2)})`,
+      data:[{x:candles.length?candles[0].x:new Date(),y:sim.entry},
+            {x:new Date(),y:sim.entry}],
+      type:"line",
+      borderColor:COLORS[i%COLORS.length],
+      borderWidth:1,
+      borderDash:[4,4],
+      pointRadius:0
+    });
+  });
   chart.update();
+}
+
+// Construcción de velas en segundos
+let aggInterval=1;
+let aggCandle=null;
+function handleTrade(price){
+  const now=Math.floor(Date.now()/1000);
+  if(!aggCandle){
+    aggCandle={time:now,open:price,high:price,low:price,close:price};
+    return;
+  }
+  if(now-aggCandle.time<aggInterval){
+    aggCandle.high=Math.max(aggCandle.high,price);
+    aggCandle.low=Math.min(aggCandle.low,price);
+    aggCandle.close=price;
+  }else{
+    candles.push({x:new Date(aggCandle.time*1000),o:aggCandle.open,h:aggCandle.high,l:aggCandle.low,c:aggCandle.close});
+    if(candles.length>200) candles.shift();
+    closes.push(aggCandle.close);
+    if(closes.length>200) closes.shift();
+    aggCandle={time:now,open:price,high:price,low:price,close:price};
+    updateChart();
+  }
 }
 
 function openWS(sym,intv){
   if(ws){ws.close();ws=null;}
   setStatus("connecting");
-  ws=new WebSocket(`wss://stream.binance.com:9443/ws/${sym.toLowerCase()}@kline_${intv}`);
+  aggInterval=parseInt(intv);
+  candles=[];closes=[];aggCandle=null;
+  initChart();updateChart();
+  ws=new WebSocket(`wss://stream.binance.com:9443/ws/${sym.toLowerCase()}@ticker`);
   ws.onopen=()=>{setStatus("online");log("WS conectado");};
   ws.onmessage=e=>{
     const d=JSON.parse(e.data);
-    if(!d.k) return;
-    lastPrice=+d.k.c;
+    lastPrice=+d.c;
     $("price").textContent=lastPrice.toFixed(2);
-    const c={x:new Date(d.k.t),o:+d.k.o,h:+d.k.h,l:+d.k.l,c:+d.k.c};
-    const i=candles.findIndex(cc=>cc.x.getTime()===c.x.getTime());
-    if(i>=0) candles[i]=c; else candles.push(c);
-    closes.push(c.c);
-    if(closes.length>100) closes.shift();
-    updateChart();
+    handleTrade(lastPrice);
   };
-  ws.onclose=()=>{setStatus("offline");log("WS cerrado, reconectando...");setTimeout(()=>openWS(sym,intv),5000);};
+  ws.onclose=()=>{
+    setStatus("offline");
+    log("WS cerrado, reconectando en 10s...");
+    setTimeout(()=>openWS(sym,intv),10000);
+  };
 }
-
-$("connectBtn").onclick=()=>{
-  candles=[];closes=[];buySignals=[];sellSignals=[];
-  initChart();updateChart();
-  openWS($("symbolSelect").value,$("intervalSelect").value);
-};
+$("connectBtn").onclick=()=>openWS($("symbolSelect").value,$("intervalSelect").value);
 
 // Calculadora
 function updateCalc(){
   const trm=parseFloat($("trmInput").value);
   const cop=parseFloat($("copAmount").value);
-  if(!trm||!cop||!lastPrice){
-    $("calcResult").textContent="Completa TRM y monto COP";
-    return;
-  }
+  if(!trm||!cop||!lastPrice){$("calcResult").textContent="Completa TRM y monto COP";return;}
   const entry=lastPrice;
   const qty=cop/(entry*trm);
   const cur=lastPrice;
@@ -189,10 +213,7 @@ setInterval(updateCalc,1000);
 function guardarSimulacion(){
   const cop=parseFloat($("copAmount").value);
   const trm=parseFloat($("trmInput").value);
-  if(!cop||!trm||!lastPrice){
-    alert("Completa TRM, monto COP y conecta primero.");
-    return;
-  }
+  if(!cop||!trm||!lastPrice){alert("Completa TRM, monto COP y conecta primero.");return;}
   const entry=lastPrice;
   const qty=cop/(entry*trm);
   const sim={id:Date.now(),cop,trm,entry,qty,symbol:$("symbolSelect").value};
@@ -200,36 +221,52 @@ function guardarSimulacion(){
   if(simulaciones.length>10) simulaciones.pop();
   localStorage.setItem("simulaciones",JSON.stringify(simulaciones));
   renderSimulaciones();
+  updateChart();
 }
-
+function eliminarSimulacion(id){
+  simulaciones=simulaciones.filter(s=>s.id!==id);
+  localStorage.setItem("simulaciones",JSON.stringify(simulaciones));
+  renderSimulaciones();
+  updateChart();
+}
 function renderSimulaciones(){
-  if(!simulaciones.length){
-    $("simList").innerText="No hay simulaciones";return;
-  }
-  $("simList").innerHTML=simulaciones.map(sim=>{
+  if(!simulaciones.length){$("simList").innerText="No hay simulaciones";return;}
+  $("simList").innerHTML=simulaciones.map((sim,i)=>{
     const cur=lastPrice||sim.entry;
     const pl=((cur-sim.entry)/sim.entry*100).toFixed(2);
     const plCop=((cur-sim.entry)*sim.qty*sim.trm).toFixed(0);
-    return `
-      <div style="margin-bottom:6px;border-bottom:1px solid #30363d;padding-bottom:4px">
-        <b>${sim.symbol}</b><br>
-        Entrada: ${sim.entry.toFixed(2)} USDT<br>
-        Inversión: ${sim.cop.toLocaleString()} COP<br>
-        Actual: ${cur.toFixed(2)} USDT<br>
-        Resultado: ${pl}% → ${parseInt(plCop).toLocaleString()} COP
-      </div>
-    `;
+    return `<div class="sim-box">
+      <button class="sim-delete" onclick="eliminarSimulacion(${sim.id})">❌</button>
+      <b>${sim.symbol}</b><br>
+      Entrada: ${sim.entry.toFixed(2)} USDT<br>
+      Inversión: ${sim.cop.toLocaleString()} COP<br>
+      Actual: ${cur.toFixed(2)} USDT<br>
+      Resultado: ${pl}% → ${parseInt(plCop).toLocaleString()} COP
+    </div>`;
   }).join("");
 }
 $("simulateBtn").onclick=guardarSimulacion;
 setInterval(renderSimulaciones,1000);
 renderSimulaciones();
 
-// Alertas manuales
-$("markBuy").onclick=()=>{buySignals.push({x:new Date(),y:lastPrice});updateChart();};
-$("markSell").onclick=()=>{sellSignals.push({x:new Date(),y:lastPrice});updateChart();};
+// Exportar CSV
+$("downloadBtn").onclick=()=>{
+  if(!simulaciones.length){alert("No hay simulaciones guardadas.");return;}
+  let csv="Símbolo,Entrada USDT,Monto COP,TRM,Cantidad,P&L %,P&L COP\n";
+  simulaciones.forEach(sim=>{
+    const cur=lastPrice||sim.entry;
+    const pl=((cur-sim.entry)/sim.entry*100).toFixed(2);
+    const plCop=((cur-sim.entry)*sim.qty*sim.trm).toFixed(0);
+    csv+=`${sim.symbol},${sim.entry},${sim.cop},${sim.trm},${sim.qty},${pl},${plCop}\n`;
+  });
+  const blob=new Blob([csv],{type:"text/csv"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;a.download="simulaciones.csv";a.click();
+  URL.revokeObjectURL(url);
+};
 
-// Inicializar gráfico vacío
+// Inicializar
 initChart();
 </script>
 </body>
