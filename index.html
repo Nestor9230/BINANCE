@@ -98,43 +98,110 @@
 
   <div id="statusIndicator" class="offline">🔴 Desconectado</div>
 
-<script>
-const $=id=>document.getElementById(id);
-const SYMBOLS=['BTCUSDT','ETHUSDT','BNBUSDT','XRPUSDT','ADAUSDT','SOLUSDT','DOGEUSDT','DOTUSDT','MATICUSDT','LTCUSDT'];
-let candles=[],closes=[],chart,ws;
-let buySignals=[],sellSignals=[];
-let lastKlineStart=null;
+  <!-- ⚡ Ahora con defer para que el DOM esté listo antes del JS -->
+  <script defer>
+    const $=id=>document.getElementById(id);
+    const SYMBOLS=['BTCUSDT','ETHUSDT','BNBUSDT','XRPUSDT','ADAUSDT','SOLUSDT','DOGEUSDT','DOTUSDT','MATICUSDT','LTCUSDT'];
+    let candles=[],closes=[],chart,ws;
+    let buySignals=[],sellSignals=[];
+    let lastKlineStart=null;
 
-function log(m){const t=new Date().toLocaleTimeString();$('log').innerText=`[${t}] ${m}\n`+$('log').innerText;}
-function setStatus(state,text){
-  const el=$('statusIndicator');
-  if(state==='online'){el.className='online';el.textContent='🟢 Conectado';$('statusText').textContent='Estado: Conectado';}
-  else if(state==='connecting'){el.className='connecting';el.textContent='🟡 Conectando...';$('statusText').textContent='Estado: Conectando';}
-  else{el.className='offline';el.textContent='🔴 Desconectado';$('statusText').textContent='Estado: Desconectado';}
-  if(text)$('lastPriceMini').textContent='Precio: '+text;
-}
+    function log(m){const t=new Date().toLocaleTimeString();$('log').innerText=`[${t}] ${m}\n`+$('log').innerText;}
+    function setStatus(state,text){
+      const el=$('statusIndicator');
+      if(state==='online'){el.className='online';el.textContent='🟢 Conectado';$('statusText').textContent='Estado: Conectado';}
+      else if(state==='connecting'){el.className='connecting';el.textContent='🟡 Conectando...';$('statusText').textContent='Estado: Conectando';}
+      else{el.className='offline';el.textContent='🔴 Desconectado';$('statusText').textContent='Estado: Desconectado';}
+      if(text)$('lastPriceMini').textContent='Precio: '+text;
+    }
 
-// ===== Nuevo: función con fallback =====
-async function fetchKlines(sym,intv){
-  const endpoints = [
-    "https://api.binance.com",
-    "https://api1.binance.com",
-    "https://api2.binance.com",
-    "https://api3.binance.com",
-    "https://api.binance.us"
-  ];
-  for(let base of endpoints){
-    try{
-      const url=`${base}/api/v3/klines?symbol=${sym}&interval=${intv}&limit=200`;
-      const resp=await fetch(url);
-      if(resp.ok){
-        log("Histórico desde: "+base);
-        return await resp.json();
+    async function fetchKlines(sym,intv){
+      const endpoints = [
+        "https://api.binance.com",
+        "https://api1.binance.com",
+        "https://api2.binance.com",
+        "https://api3.binance.com",
+        "https://api.binance.us"
+      ];
+      for(let base of endpoints){
+        try{
+          const url=`${base}/api/v3/klines?symbol=${sym}&interval=${intv}&limit=200`;
+          const resp=await fetch(url);
+          if(resp.ok){
+            log("Histórico desde: "+base);
+            return await resp.json();
+          }
+        }catch(e){console.warn("Falló:",base,e);}
       }
-    }catch(e){console.warn("Falló:",base,e);}
-  }
-  throw new Error("No se pudo obtener histórico desde ningún endpoint");
-}
-// =======================================
+      throw new Error("No se pudo obtener histórico desde ningún endpoint");
+    }
 
-function ema(v,p){const k=2/(p+1);le
+    function ema(v,p){const k=2/(p+1);let out=[v[0]],prev=v[0];for(let i=1;i<v.length;i++){prev=v[i]*k+prev*(1-k);out.push(prev);}return out;}
+    function rsi(v,p=14){if(v.length<=p)return new Array(v.length).fill(null);let g=0,l=0;for(let i=1;i<=p;i++){const d=v[i]-v[i-1];if(d>0)g+=d;else l+=-d;}let ag=g/p,al=l/p;let out=new Array(v.length).fill(null);out[p]=100-(100/(1+ag/(al||1)));for(let i=p+1;i<v.length;i++){const d=v[i]-v[i-1];const gain=d>0?d:0,loss=d<0?-d:0;ag=(ag*(p-1)+gain)/p;al=(al*(p-1)+loss)/p;out[i]=100-(100/(1+ag/(al||1)));}return out;}
+
+    function initChart(){
+      if (chart) { chart.destroy(); }
+      const ctx=$('chart').getContext('2d');
+      chart=new Chart(ctx,{
+        type:'candlestick',
+        data:{datasets:[
+          {label:'Candlestick',data:candles},
+          {label:'Compra',data:buySignals,type:'scatter',showLine:false,pointStyle:'triangle',rotation:0,pointRadius:10,borderColor:'green',backgroundColor:'green'},
+          {label:'Venta',data:sellSignals,type:'scatter',showLine:false,pointStyle:'triangle',rotation:180,pointRadius:10,borderColor:'red',backgroundColor:'red'}
+        ]},
+        options:{
+          plugins:{legend:{labels:{color:'#e6edf3'}}},
+          scales:{
+            x:{type:'time',ticks:{color:'#aaa'}},
+            y:{ticks:{color:'#aaa'}}
+          }
+        }
+      });
+    }
+    function updateChart(){chart.data.datasets[0].data=candles;chart.data.datasets[1].data=buySignals;chart.data.datasets[2].data=sellSignals;chart.update('none');}
+
+    async function start(sym,intv){
+      if(ws){try{ws.close();}catch{} ws=null;}
+      setStatus('connecting');
+      try{
+        const data=await fetchKlines(sym,intv);
+        candles=data.map(k=>({x:new Date(k[0]),o:+k[1],h:+k[2],l:+k[3],c:+k[4]}));
+        closes=data.map(k=>+k[4]);
+        buySignals=[];sellSignals=[];
+        initChart();updateChart();
+        openWS(sym,intv);
+      }catch(err){log("Error histórico: "+err.message);setStatus('offline');}
+    }
+    function openWS(sym,intv){
+      ws=new WebSocket(`wss://stream.binance.com:9443/ws/${sym.toLowerCase()}@kline_${intv}`);
+      ws.onopen=()=>{log('WS conectado');setStatus('online',closes.at(-1));};
+      ws.onclose=()=>{log('WS cerrado, reconectando...');setStatus('offline');setTimeout(()=>start(sym,intv),4000);};
+      ws.onmessage=e=>{const k=JSON.parse(e.data).k;if(!k)return;handleKline(k);};
+    }
+    function handleKline(k){
+      const c={x:new Date(k.t),o:+k.o,h:+k.h,l:+k.l,c:+k.c};
+      if(lastKlineStart===null||k.t!==lastKlineStart){lastKlineStart=k.t;candles.push(c);closes.push(c.c);}else{candles[candles.length-1]=c;closes[closes.length-1]=c.c;}
+      if(candles.length>200){candles.shift();closes.shift();}
+      updateChart();setStatus('online',closes.at(-1));updateCalc();
+    }
+
+    function updateCalc(){const cop=parseFloat($('copAmount').value),trm=parseFloat($('trmInput').value);if(!cop||!trm||!closes.length){$('calcResult').innerText='Completa TRM y monto COP';return;}const cur=closes.at(-1),entry=parseFloat($('entryPrice').value)||cur;const qty=cop/(cur*trm),pl=((cur-entry)/entry*100),plCop=(cur-entry)*qty*trm;$('calcResult').innerText=`Inversión: ${cop.toLocaleString()} COP\nCripto: ${qty.toFixed(8)} ${$('symbolSelect').value.replace('USDT','')}\nEntrada: ${entry} USDT\nActual: ${cur} USDT\nResultado: ${pl.toFixed(2)}% → ${plCop.toLocaleString()} COP`; }
+
+    $('connectBtn').onclick=()=>start($('symbolSelect').value,$('interval').value);
+    $('trmInput').oninput=()=>{localStorage.setItem('trmValue',$('trmInput').value);updateCalc();};
+    $('copAmount').oninput=updateCalc;$('entryPrice').oninput=updateCalc;
+    $('manualBuyBtn').onclick=()=>{buySignals.push({x:candles.at(-1).x,y:candles.at(-1).c});log('📢 Alerta MANUAL COMPRA');updateChart();};
+    $('manualSellBtn').onclick=()=>{sellSignals.push({x:candles.at(-1).x,y:candles.at(-1).c});log('🚨 Alerta MANUAL VENTA');updateChart();};
+
+    // ✅ Llenar lista de criptos cuando DOM esté listo
+    SYMBOLS.forEach(s=>{
+      const o=document.createElement('option');
+      o.value=s; o.textContent=s;
+      $('symbolSelect').appendChild(o);
+    });
+    $('symbolSelect').value='BTCUSDT';
+    if(localStorage.getItem('trmValue'))
+      $('trmInput').value=localStorage.getItem('trmValue');
+  </script>
+</body>
+</html>
