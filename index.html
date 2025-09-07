@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Panel Cripto - Velas con Fallback Binance</title>
+  <title>Panel Cripto - Velas con Proxy Binance</title>
 
-  <!-- Chart.js 3.7.1 + plugin candlestick compatible -->
+  <!-- Chart.js + plugin financial -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.1.0"></script>
 
-  <!-- Luxon + Adapter para fechas -->
+  <!-- Luxon + Adapter fechas -->
   <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.3/build/global/luxon.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
 
@@ -38,6 +38,8 @@
     .connecting{background:#d4a017;}
     .offline{background:#d73a49;}
     .muted{color:#9aa4bf;font-size:13px}
+    #errorBox{margin-top:10px;padding:8px;border:1px solid #ff5c5c;border-radius:6px;
+      color:#ff5c5c;font-size:13px;max-height:100px;overflow:auto;white-space:pre-line;}
   </style>
 </head>
 <body>
@@ -73,6 +75,7 @@
 
         <canvas id="chart"></canvas>
         <div id="signalBox" class="signalBox muted">—</div>
+        <div id="errorBox">Sin errores</div>
       </div>
 
       <!-- Panel lateral -->
@@ -98,7 +101,6 @@
 
   <div id="statusIndicator" class="offline">🔴 Desconectado</div>
 
-  <!-- ⚡ Ahora con defer para que el DOM esté listo antes del JS -->
   <script defer>
     const $=id=>document.getElementById(id);
     const SYMBOLS=['BTCUSDT','ETHUSDT','BNBUSDT','XRPUSDT','ADAUSDT','SOLUSDT','DOGEUSDT','DOTUSDT','MATICUSDT','LTCUSDT'];
@@ -107,6 +109,13 @@
     let lastKlineStart=null;
 
     function log(m){const t=new Date().toLocaleTimeString();$('log').innerText=`[${t}] ${m}\n`+$('log').innerText;}
+    function showError(msg){
+      const t=new Date().toLocaleTimeString();
+      const box=$('errorBox');
+      if(box.innerText==="Sin errores") box.innerText="";
+      box.innerText=`[${t}] ${msg}\n`+box.innerText;
+    }
+
     function setStatus(state,text){
       const el=$('statusIndicator');
       if(state==='online'){el.className='online';el.textContent='🟢 Conectado';$('statusText').textContent='Estado: Conectado';}
@@ -115,6 +124,7 @@
       if(text)$('lastPriceMini').textContent='Precio: '+text;
     }
 
+    // 🚀 Ahora con proxy CORS
     async function fetchKlines(sym,intv){
       const endpoints = [
         "https://api.binance.com",
@@ -125,19 +135,19 @@
       ];
       for(let base of endpoints){
         try{
-          const url=`${base}/api/v3/klines?symbol=${sym}&interval=${intv}&limit=200`;
+          const target = `${base}/api/v3/klines?symbol=${sym}&interval=${intv}&limit=200`;
+          const url = `https://corsproxy.io/?${encodeURIComponent(target)}`;
           const resp=await fetch(url);
           if(resp.ok){
-            log("Histórico desde: "+base);
+            log("Histórico desde: "+base+" (via proxy)");
             return await resp.json();
           }
-        }catch(e){console.warn("Falló:",base,e);}
+        }catch(e){
+          showError("Falló "+base+" → "+e.message);
+        }
       }
       throw new Error("No se pudo obtener histórico desde ningún endpoint");
     }
-
-    function ema(v,p){const k=2/(p+1);let out=[v[0]],prev=v[0];for(let i=1;i<v.length;i++){prev=v[i]*k+prev*(1-k);out.push(prev);}return out;}
-    function rsi(v,p=14){if(v.length<=p)return new Array(v.length).fill(null);let g=0,l=0;for(let i=1;i<=p;i++){const d=v[i]-v[i-1];if(d>0)g+=d;else l+=-d;}let ag=g/p,al=l/p;let out=new Array(v.length).fill(null);out[p]=100-(100/(1+ag/(al||1)));for(let i=p+1;i<v.length;i++){const d=v[i]-v[i-1];const gain=d>0?d:0,loss=d<0?-d:0;ag=(ag*(p-1)+gain)/p;al=(al*(p-1)+loss)/p;out[i]=100-(100/(1+ag/(al||1)));}return out;}
 
     function initChart(){
       if (chart) { chart.destroy(); }
@@ -170,12 +180,17 @@
         buySignals=[];sellSignals=[];
         initChart();updateChart();
         openWS(sym,intv);
-      }catch(err){log("Error histórico: "+err.message);setStatus('offline');}
+      }catch(err){
+        log("Error histórico: "+err.message);
+        showError("Error histórico: "+err.message);
+        setStatus('offline');
+      }
     }
     function openWS(sym,intv){
       ws=new WebSocket(`wss://stream.binance.com:9443/ws/${sym.toLowerCase()}@kline_${intv}`);
       ws.onopen=()=>{log('WS conectado');setStatus('online',closes.at(-1));};
-      ws.onclose=()=>{log('WS cerrado, reconectando...');setStatus('offline');setTimeout(()=>start(sym,intv),4000);};
+      ws.onclose=()=>{log('WS cerrado, reconectando...');showError("WS cerrado, reconectando...");setStatus('offline');setTimeout(()=>start(sym,intv),4000);};
+      ws.onerror=e=>{showError("Error WS: "+e.message);};
       ws.onmessage=e=>{const k=JSON.parse(e.data).k;if(!k)return;handleKline(k);};
     }
     function handleKline(k){
@@ -185,7 +200,20 @@
       updateChart();setStatus('online',closes.at(-1));updateCalc();
     }
 
-    function updateCalc(){const cop=parseFloat($('copAmount').value),trm=parseFloat($('trmInput').value);if(!cop||!trm||!closes.length){$('calcResult').innerText='Completa TRM y monto COP';return;}const cur=closes.at(-1),entry=parseFloat($('entryPrice').value)||cur;const qty=cop/(cur*trm),pl=((cur-entry)/entry*100),plCop=(cur-entry)*qty*trm;$('calcResult').innerText=`Inversión: ${cop.toLocaleString()} COP\nCripto: ${qty.toFixed(8)} ${$('symbolSelect').value.replace('USDT','')}\nEntrada: ${entry} USDT\nActual: ${cur} USDT\nResultado: ${pl.toFixed(2)}% → ${plCop.toLocaleString()} COP`; }
+    function updateCalc(){
+      const cop=parseFloat($('copAmount').value),trm=parseFloat($('trmInput').value);
+      if(!cop||!trm||!closes.length){
+        $('calcResult').innerText='Completa TRM y monto COP';
+        return;
+      }
+      const cur=closes.at(-1),entry=parseFloat($('entryPrice').value)||cur;
+      const qty=cop/(cur*trm),pl=((cur-entry)/entry*100),plCop=(cur-entry)*qty*trm;
+      $('calcResult').innerText=
+        `Inversión: ${cop.toLocaleString()} COP\n`+
+        `Cripto: ${qty.toFixed(8)} ${$('symbolSelect').value.replace('USDT','')}\n`+
+        `Entrada: ${entry} USDT\nActual: ${cur} USDT\n`+
+        `Resultado: ${pl.toFixed(2)}% → ${plCop.toLocaleString()} COP`;
+    }
 
     $('connectBtn').onclick=()=>start($('symbolSelect').value,$('interval').value);
     $('trmInput').oninput=()=>{localStorage.setItem('trmValue',$('trmInput').value);updateCalc();};
@@ -193,7 +221,7 @@
     $('manualBuyBtn').onclick=()=>{buySignals.push({x:candles.at(-1).x,y:candles.at(-1).c});log('📢 Alerta MANUAL COMPRA');updateChart();};
     $('manualSellBtn').onclick=()=>{sellSignals.push({x:candles.at(-1).x,y:candles.at(-1).c});log('🚨 Alerta MANUAL VENTA');updateChart();};
 
-    // ✅ Llenar lista de criptos cuando DOM esté listo
+    // Inicializar lista
     SYMBOLS.forEach(s=>{
       const o=document.createElement('option');
       o.value=s; o.textContent=s;
