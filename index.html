@@ -136,9 +136,9 @@
   <script defer>
     const $=id=>document.getElementById(id);
     const SYMBOLS=['BTCUSDT','ETHUSDT','BNBUSDT','XRPUSDT','ADAUSDT','SOLUSDT','DOGEUSDT','DOTUSDT','MATICUSDT','LTCUSDT'];
-    let candles=[],closes=[],chart,ws;
+    let candles=[],closes=[],chart,ws,lastPrice=null;
     let buySignals=[],sellSignals=[];
-    let lastKlineStart=null;
+    let lastKlineStart=null, sma7Data=[], sma25Data=[];
 
     function log(m){const t=new Date().toLocaleTimeString();$('log').innerText=`[${t}] ${m}\n`+$('log').innerText;}
     function showError(msg){
@@ -164,30 +164,6 @@
       if(text)$('lastPriceMini').textContent='Precio: '+text;
     }
 
-    async function fetchKlines(sym,intv){
-      const endpoints = [
-        "https://api.binance.com",
-        "https://api1.binance.com",
-        "https://api2.binance.com",
-        "https://api3.binance.com",
-        "https://api.binance.us"
-      ];
-      for(let base of endpoints){
-        try{
-          const target = `${base}/api/v3/klines?symbol=${sym}&interval=${intv}&limit=200`;
-          const url = `https://corsproxy.io/?${encodeURIComponent(target)}`;
-          const resp=await fetch(url);
-          if(resp.ok){
-            log("Histórico desde: "+base+" (via proxy)");
-            return await resp.json();
-          }
-        }catch(e){
-          showError("Falló "+base+" → "+e.message);
-        }
-      }
-      throw new Error("No se pudo obtener histórico desde ningún endpoint");
-    }
-
     function initChart(){
       if (chart) { chart.destroy(); }
       const ctx=$('chart').getContext('2d');
@@ -196,7 +172,9 @@
         data:{datasets:[
           {label:'Candlestick',data:candles},
           {label:'Compra',data:buySignals,type:'scatter',showLine:false,pointStyle:'triangle',rotation:0,pointRadius:10,borderColor:'green',backgroundColor:'green'},
-          {label:'Venta',data:sellSignals,type:'scatter',showLine:false,pointStyle:'triangle',rotation:180,pointRadius:10,borderColor:'red',backgroundColor:'red'}
+          {label:'Venta',data:sellSignals,type:'scatter',showLine:false,pointStyle:'triangle',rotation:180,pointRadius:10,borderColor:'red',backgroundColor:'red'},
+          {label:'SMA7',data:sma7Data,type:'line',borderColor:'blue',borderWidth:1,pointRadius:0},
+          {label:'SMA25',data:sma25Data,type:'line',borderColor:'yellow',borderWidth:1,pointRadius:0}
         ]},
         options:{
           plugins:{legend:{labels:{color:'#e6edf3'}}},
@@ -204,27 +182,19 @@
         }
       });
     }
-    function updateChart(){chart.data.datasets[0].data=candles;chart.data.datasets[1].data=buySignals;chart.data.datasets[2].data=sellSignals;chart.update('none');}
+    function updateChart(){
+      chart.data.datasets[0].data=candles;
+      chart.data.datasets[1].data=buySignals;
+      chart.data.datasets[2].data=sellSignals;
+      chart.data.datasets[3].data=sma7Data;
+      chart.data.datasets[4].data=sma25Data;
+      chart.update('none');
+    }
 
     async function start(sym,intv){
       if(ws){try{ws.close();}catch{} ws=null;}
       setStatus('connecting');
-      try {
-        const data = await fetchKlines(sym,intv);
-        if (data && data.length) {
-          candles = data.map(k=>({x:new Date(k[0]),o:+k[1],h:+k[2],l:+k[3],c:+k[4]}));
-          closes = data.map(k=>+k[4]);
-          log("Histórico cargado: "+data.length+" velas");
-        } else {
-          candles = []; closes = [];
-          showError("Histórico vacío, esperando velas en vivo...");
-        }
-      } catch(err) {
-        candles = []; closes = [];
-        log("Histórico no disponible, iniciando solo con WS");
-        showError("Histórico no disponible, esperando velas en vivo...");
-      }
-      buySignals=[]; sellSignals=[];
+      candles=[]; closes=[]; buySignals=[]; sellSignals=[]; sma7Data=[]; sma25Data=[];
       initChart(); updateChart();
       openWS(sym,intv);
     }
@@ -234,23 +204,55 @@
       ws.onopen=()=>{log('WS conectado');setStatus('online',closes.at(-1));};
       ws.onclose=()=>{log('WS cerrado, reconectando...');showError("WS cerrado, reconectando...");setStatus('offline');setTimeout(()=>start(sym,intv),4000);};
       ws.onerror=e=>{showError("Error WS: "+e.message);};
-      ws.onmessage=e=>{const k=JSON.parse(e.data).k;if(!k)return;handleKline(k);};
+      ws.onmessage=e=>{
+        const data=JSON.parse(e.data);
+        if(data.k){handleKline(data.k);}
+        if(data.k?.c){lastPrice=+data.k.c;}
+      };
     }
 
     function handleKline(k){
       const c={x:new Date(k.t),o:+k.o,h:+k.h,l:+k.l,c:+k.c};
       if(lastKlineStart===null||k.t!==lastKlineStart){lastKlineStart=k.t;candles.push(c);closes.push(c.c);}else{candles[candles.length-1]=c;closes[closes.length-1]=c.c;}
       if(candles.length>200){candles.shift();closes.shift();}
+      if(candles.length===1){lastPrice=c.c;}
+      detectSignals();
       updateChart();setStatus('online',closes.at(-1));updateCalc();
+    }
+
+    function SMA(values,period){
+      if(values.length<period)return null;
+      const slice=values.slice(-period);
+      return slice.reduce((a,b)=>a+b,0)/period;
+    }
+    function detectSignals(){
+      const sma7=SMA(closes,7),sma25=SMA(closes,25);
+      if(!sma7||!sma25)return;
+      const prev7=SMA(closes.slice(0,-1),7),prev25=SMA(closes.slice(0,-1),25);
+      sma7Data.push({x:candles.at(-1).x,y:sma7});
+      sma25Data.push({x:candles.at(-1).x,y:sma25});
+      if(sma7Data.length>200)sma7Data.shift();
+      if(sma25Data.length>200)sma25Data.shift();
+      if(prev7 && prev25){
+        if(prev7<prev25 && sma7>prev25){
+          buySignals.push({x:candles.at(-1).x,y:candles.at(-1).c});
+          showToast("📢 Señal automática de COMPRA","buy");
+        }
+        if(prev7>prev25 && sma7<prev25){
+          sellSignals.push({x:candles.at(-1).x,y:candles.at(-1).c});
+          showToast("🚨 Señal automática de VENTA","sell");
+        }
+      }
     }
 
     function updateCalc(){
       const cop=parseFloat($('copAmount').value),trm=parseFloat($('trmInput').value);
-      if(!cop||!trm||!closes.length){
+      if(!cop||!trm||!(closes.length||lastPrice)){
         $('calcResult').innerText='Completa TRM y monto COP';
         return;
       }
-      const cur=closes.at(-1),entry=parseFloat($('entryPrice').value)||cur;
+      const cur=lastPrice||closes.at(-1);
+      const entry=parseFloat($('entryPrice').value)||cur;
       const qty=cop/(cur*trm),pl=((cur-entry)/entry*100),plCop=(cur-entry)*qty*trm;
       $('calcResult').innerText=
         `Inversión: ${cop.toLocaleString()} COP\n`+
@@ -258,6 +260,8 @@
         `Entrada: ${entry} USDT\nActual: ${cur} USDT\n`+
         `Resultado: ${pl.toFixed(2)}% → ${plCop.toLocaleString()} COP`;
     }
+
+    setInterval(updateCalc,1000);
 
     $('connectBtn').onclick=()=>start($('symbolSelect').value,$('interval').value);
     $('trmInput').oninput=()=>{localStorage.setItem('trmValue',$('trmInput').value);updateCalc();};
@@ -267,17 +271,16 @@
       buySignals.push({x:candles.at(-1).x,y:candles.at(-1).c});
       log('📢 Alerta MANUAL COMPRA');
       updateChart();
-      showToast("📢 Señal de COMPRA", "buy");
+      showToast("📢 Señal de COMPRA","buy");
     };
 
     $('manualSellBtn').onclick=()=>{
       sellSignals.push({x:candles.at(-1).x,y:candles.at(-1).c});
       log('🚨 Alerta MANUAL VENTA');
       updateChart();
-      showToast("🚨 Señal de VENTA", "sell");
+      showToast("🚨 Señal de VENTA","sell");
     };
 
-    // Inicializar lista
     SYMBOLS.forEach(s=>{
       const o=document.createElement('option');
       o.value=s; o.textContent=s;
