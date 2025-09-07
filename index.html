@@ -1,294 +1,236 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Panel Cripto - Velas híbrido Binance</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Panel Cripto — Simulador</title>
 
   <!-- Chart.js + plugin financial -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.1.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.1.0/dist/chartjs-chart-financial.min.js"></script>
 
-  <!-- Luxon + Adapter fechas -->
+  <!-- Luxon + adapter -->
   <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.3/build/global/luxon.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
 
   <style>
-    body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#0d1117;color:#e6edf3}
-    header{background:#161b22;padding:14px 20px;font-weight:bold}
-    .container{max-width:1200px;margin:20px auto;padding:0 16px}
-    .grid{display:grid;grid-template-columns:1.2fr .8fr;gap:16px}
-    .card{background:#161b22;border-radius:10px;padding:14px;box-shadow:0 4px 18px rgba(0,0,0,.35)}
-    label{font-size:13px;color:#8b949e}
-    select,input,button{padding:8px 10px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e6edf3}
-    button{cursor:pointer;background:#238636;border:none;color:white;font-weight:bold}
-    button:hover{background:#2ea043}
-    .row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
-    .log{max-height:180px;overflow:auto;font-family:monospace;font-size:12px;background:#0d1117;padding:8px;border-radius:6px;white-space:pre-wrap}
-    canvas{height:420px !important}
-    .calc-result{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px;margin-top:8px;white-space:pre-line}
-    .signalBox{margin-top:10px;padding:10px;border-radius:8px;font-weight:bold}
-    .buy{background:rgba(46,160,67,0.2);color:#2ea043}
-    .sell{background:rgba(219,48,48,0.2);color:#ff5c5c}
-    #statusIndicator{
-      position:fixed;bottom:10px;right:15px;padding:6px 12px;border-radius:6px;
-      font-size:13px;font-weight:bold;color:white;z-index:9999;
-    }
-    .online{background:#2ea043;}
-    .connecting{background:#d4a017;}
-    .offline{background:#d73a49;}
-    .muted{color:#9aa4bf;font-size:13px}
-    #errorBox{margin-top:10px;padding:8px;border:1px solid #ff5c5c;border-radius:6px;
-      color:#ff5c5c;font-size:13px;max-height:100px;overflow:auto;white-space:pre-line;}
-
-    /* Toasts flotantes */
-    #toastContainer {
-      position: fixed;
-      top: 20px;
-      right: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      z-index: 10000;
-    }
-    .toast {
-      min-width: 220px;
-      padding: 10px 14px;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: bold;
-      box-shadow: 0 4px 12px rgba(0,0,0,.3);
-      opacity: 0;
-      transform: translateX(100%);
-      animation: slideIn 0.4s forwards, fadeOut 0.5s forwards 4.5s;
-    }
-    .toast.buy { background: #2ea043; color: white; }
-    .toast.sell { background: #d73a49; color: white; }
-    @keyframes slideIn {
-      from {opacity:0; transform:translateX(100%);}
-      to {opacity:1; transform:translateX(0);}
-    }
-    @keyframes fadeOut {
-      to {opacity:0; transform:translateX(100%);}
-    }
+    body {margin:0;background:#0d1117;color:#e6edf3;font-family:Arial,Helvetica,sans-serif;}
+    header {background:#161b22;padding:10px;font-weight:bold;}
+    .container {display:grid;grid-template-columns:1.5fr .7fr;gap:15px;padding:15px;}
+    .card {background:#161b22;border-radius:8px;padding:10px;}
+    label{display:block;margin-top:8px;color:#8b949e;font-size:13px;}
+    select,input,button{padding:6px;border-radius:4px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;}
+    button{cursor:pointer;background:#238636;color:#fff;border:none;}
+    button:hover{background:#2ea043;}
+    #statusIndicator{position:fixed;bottom:10px;right:10px;padding:6px 12px;border-radius:8px;font-size:13px;}
+    #statusIndicator.connecting{background:#d29922;color:#fff;}
+    #statusIndicator.online{background:#238636;color:#fff;}
+    #statusIndicator.offline{background:#f85149;color:#fff;}
+    .calc-result{margin-top:8px;font-size:13px;}
+    #log{height:120px;overflow-y:auto;background:#0d1117;padding:5px;border:1px solid #30363d;font-size:12px;}
   </style>
 </head>
 <body>
-  <header>Panel Cripto — Velas • Calculadora COP • Señales + Alertas manuales</header>
+<header>Panel Cripto — Velas • Calculadora COP • Simulador de compras</header>
 
-  <div class="container">
-    <div class="grid">
-      <!-- Gráfica -->
-      <div class="card">
-        <div class="row" style="justify-content:space-between;align-items:flex-end">
-          <div style="display:flex;gap:10px;align-items:flex-end">
-            <div>
-              <label>Criptomoneda</label><br>
-              <select id="symbolSelect"></select>
-            </div>
-            <div>
-              <label>Intervalo</label><br>
-              <select id="interval">
-                <option value="1m">1m</option>
-                <option value="5m" selected>5m</option>
-                <option value="15m">15m</option>
-                <option value="1h">1h</option>
-              </select>
-            </div>
-            <div><button id="connectBtn">Conectar</button></div>
-          </div>
-
-          <div style="text-align:right">
-            <div class="muted" id="statusText">Estado: —</div>
-            <div class="muted" id="lastPriceMini">Precio: —</div>
-          </div>
-        </div>
-
-        <canvas id="chart"></canvas>
-        <div id="signalBox" class="signalBox muted">—</div>
-        <div id="errorBox">Sin errores</div>
-      </div>
-
-      <!-- Panel lateral -->
-      <div class="card">
-        <h3>Calculadora en COP</h3>
-        <label>TRM (COP/USD)</label><br>
-        <input id="trmInput" type="number" placeholder="Ej: 4000" /><br>
-        <label>Monto a invertir (COP)</label><br>
-        <input id="copAmount" type="number" placeholder="Ej: 1000000" /><br>
-        <label>Precio de entrada (USDT, opcional)</label><br>
-        <input id="entryPrice" type="number" placeholder="Si vacío = entrada ahora" /><br>
-        <div id="calcResult" class="calc-result">Resultado: —</div>
-
-        <h3>Alertas manuales</h3>
-        <button id="manualBuyBtn">📢 Marcar COMPRA</button>
-        <button id="manualSellBtn">🚨 Marcar VENTA</button>
-
-        <h4>Registro</h4>
-        <div id="log" class="log"></div>
+<div class="container">
+  <div class="card">
+    <div style="display:flex;gap:8px;align-items:center;">
+      <label>Criptomoneda</label>
+      <select id="symbolSelect"></select>
+      <label>Intervalo</label>
+      <select id="intervalSelect">
+        <option value="1m">1m</option>
+        <option value="5m">5m</option>
+        <option value="15m">15m</option>
+      </select>
+      <button id="connectBtn">Conectar</button>
+      <div style="margin-left:auto;text-align:right;font-size:13px;">
+        Estado: <span id="status">—</span><br>
+        Precio: <span id="price">—</span>
       </div>
     </div>
+    <canvas id="chart" height="300"></canvas>
   </div>
 
-  <div id="statusIndicator" class="offline">🔴 Desconectado</div>
-  <div id="toastContainer"></div>
+  <div class="card">
+    <h3>Calculadora en COP</h3>
+    <label>TRM (COP/USD)</label>
+    <input id="trmInput" placeholder="Ej: 4000">
+    <label>Monto a invertir (COP)</label>
+    <input id="copAmount" placeholder="Ej: 1000000">
+    <div class="calc-result" id="calcResult">Completa TRM y monto COP</div>
 
-  <script defer>
-    const $=id=>document.getElementById(id);
-    const SYMBOLS=['BTCUSDT','ETHUSDT','BNBUSDT','XRPUSDT','ADAUSDT','SOLUSDT','DOGEUSDT','DOTUSDT','MATICUSDT','LTCUSDT'];
-    let candles=[],closes=[],chart,ws,lastPrice=null;
-    let buySignals=[],sellSignals=[];
-    let lastKlineStart=null, sma7Data=[], sma25Data=[];
+    <h3>Simulación de inversión</h3>
+    <button id="simulateBtn">💰 Simular compra</button>
+    <div id="simList" class="calc-result">No hay simulaciones</div>
 
-    function log(m){const t=new Date().toLocaleTimeString();$('log').innerText=`[${t}] ${m}\n`+$('log').innerText;}
-    function showError(msg){
-      const t=new Date().toLocaleTimeString();
-      const box=$('errorBox');
-      if(box.innerText==="Sin errores") box.innerText="";
-      box.innerText=`[${t}] ${msg}\n`+box.innerText;
+    <h3>Alertas manuales</h3>
+    <button id="markBuy">📢 Marcar COMPRA</button>
+    <button id="markSell">📢 Marcar VENTA</button>
+
+    <h3>Registro</h3>
+    <div id="log"></div>
+  </div>
+</div>
+
+<div id="statusIndicator" class="offline">🔴 Desconectado</div>
+
+<script defer>
+const $=id=>document.getElementById(id);
+let ws,lastPrice,chart,candles=[],closes=[],buySignals=[],sellSignals=[];
+let simulaciones = JSON.parse(localStorage.getItem("simulaciones") || "[]");
+
+const SYMBOLS=["BTCUSDT","ETHUSDT","BNBUSDT","XRPUSDT","LTCUSDT"];
+
+function log(msg){
+  const time=new Date().toLocaleTimeString();
+  $("log").innerHTML+=`[${time}] ${msg}<br>`;
+  $("log").scrollTop=$("log").scrollHeight;
+}
+function setStatus(st){
+  if(st==="online"){
+    $("statusIndicator").className="online";
+    $("statusIndicator").textContent="🟢 Conectado";
+    $("status").textContent="Conectado";
+  }else if(st==="connecting"){
+    $("statusIndicator").className="connecting";
+    $("statusIndicator").textContent="🟡 Conectando...";
+    $("status").textContent="Conectando";
+  }else{
+    $("statusIndicator").className="offline";
+    $("statusIndicator").textContent="🔴 Desconectado";
+    $("status").textContent="Desconectado";
+    $("price").textContent="—";
+  }
+}
+
+// Inicializar lista de símbolos
+SYMBOLS.forEach(s=>{
+  const o=document.createElement("option");
+  o.value=s;o.textContent=s;
+  $("symbolSelect").appendChild(o);
+});
+$("symbolSelect").value="BTCUSDT";
+
+// Crear gráfico
+function initChart(){
+  if(chart) chart.destroy();
+  const ctx=$("chart").getContext("2d");
+  chart=new Chart(ctx,{
+    type:"candlestick",
+    data:{datasets:[
+      {label:"Candlestick",data:candles},
+      {label:"Compra",data:buySignals,type:"scatter",showLine:false,pointStyle:"triangle",rotation:0,pointRadius:10,borderColor:"green",backgroundColor:"green"},
+      {label:"Venta",data:sellSignals,type:"scatter",showLine:false,pointStyle:"triangle",rotation:180,pointRadius:10,borderColor:"red",backgroundColor:"red"}
+    ]},
+    options:{
+      plugins:{legend:{labels:{color:"#e6edf3"}}},
+      scales:{x:{type:"time",ticks:{color:"#aaa"}},y:{ticks:{color:"#aaa"}}}
     }
+  });
+}
 
-    function showToast(msg,type){
-      const toast=document.createElement('div');
-      toast.className=`toast ${type}`;
-      toast.textContent=msg;
-      $('toastContainer').appendChild(toast);
-      setTimeout(()=>toast.remove(),5000);
-    }
+function updateChart(){
+  chart.data.datasets[0].data=candles;
+  chart.update();
+}
 
-    function setStatus(state,text){
-      const el=$('statusIndicator');
-      if(state==='online'){el.className='online';el.textContent='🟢 Conectado';$('statusText').textContent='Estado: Conectado';}
-      else if(state==='connecting'){el.className='connecting';el.textContent='🟡 Conectando...';$('statusText').textContent='Estado: Conectando';}
-      else{el.className='offline';el.textContent='🔴 Desconectado';$('statusText').textContent='Estado: Desconectado';}
-      if(text)$('lastPriceMini').textContent='Precio: '+text;
-    }
+function openWS(sym,intv){
+  if(ws){ws.close();ws=null;}
+  setStatus("connecting");
+  ws=new WebSocket(`wss://stream.binance.com:9443/ws/${sym.toLowerCase()}@kline_${intv}`);
+  ws.onopen=()=>{setStatus("online");log("WS conectado");};
+  ws.onmessage=e=>{
+    const d=JSON.parse(e.data);
+    if(!d.k) return;
+    lastPrice=+d.k.c;
+    $("price").textContent=lastPrice.toFixed(2);
+    const c={x:new Date(d.k.t),o:+d.k.o,h:+d.k.h,l:+d.k.l,c:+d.k.c};
+    const i=candles.findIndex(cc=>cc.x.getTime()===c.x.getTime());
+    if(i>=0) candles[i]=c; else candles.push(c);
+    closes.push(c.c);
+    if(closes.length>100) closes.shift();
+    updateChart();
+  };
+  ws.onclose=()=>{setStatus("offline");log("WS cerrado, reconectando...");setTimeout(()=>openWS(sym,intv),5000);};
+}
 
-    function initChart(){
-      if (chart) { chart.destroy(); }
-      const ctx=$('chart').getContext('2d');
-      chart=new Chart(ctx,{
-        type:'candlestick',
-        data:{datasets:[
-          {label:'Candlestick',data:candles},
-          {label:'Compra',data:buySignals,type:'scatter',showLine:false,pointStyle:'triangle',rotation:0,pointRadius:10,borderColor:'green',backgroundColor:'green'},
-          {label:'Venta',data:sellSignals,type:'scatter',showLine:false,pointStyle:'triangle',rotation:180,pointRadius:10,borderColor:'red',backgroundColor:'red'},
-          {label:'SMA7',data:sma7Data,type:'line',borderColor:'blue',borderWidth:1,pointRadius:0},
-          {label:'SMA25',data:sma25Data,type:'line',borderColor:'yellow',borderWidth:1,pointRadius:0}
-        ]},
-        options:{
-          plugins:{legend:{labels:{color:'#e6edf3'}}},
-          scales:{x:{type:'time',ticks:{color:'#aaa'}},y:{ticks:{color:'#aaa'}}}
-        }
-      });
-    }
-    function updateChart(){
-      chart.data.datasets[0].data=candles;
-      chart.data.datasets[1].data=buySignals;
-      chart.data.datasets[2].data=sellSignals;
-      chart.data.datasets[3].data=sma7Data;
-      chart.data.datasets[4].data=sma25Data;
-      chart.update('none');
-    }
+$("connectBtn").onclick=()=>{
+  candles=[];closes=[];buySignals=[];sellSignals=[];
+  initChart();updateChart();
+  openWS($("symbolSelect").value,$("intervalSelect").value);
+};
 
-    async function start(sym,intv){
-      if(ws){try{ws.close();}catch{} ws=null;}
-      setStatus('connecting');
-      candles=[]; closes=[]; buySignals=[]; sellSignals=[]; sma7Data=[]; sma25Data=[];
-      initChart(); updateChart();
-      openWS(sym,intv);
-    }
+// Calculadora
+function updateCalc(){
+  const trm=parseFloat($("trmInput").value);
+  const cop=parseFloat($("copAmount").value);
+  if(!trm||!cop||!lastPrice){
+    $("calcResult").textContent="Completa TRM y monto COP";
+    return;
+  }
+  const entry=lastPrice;
+  const qty=cop/(entry*trm);
+  const cur=lastPrice;
+  const res=((cur-entry)/entry*100).toFixed(2);
+  const pl=((cur-entry)*qty*trm).toFixed(0);
+  $("calcResult").innerHTML=`
+    Inversión: ${cop.toLocaleString()} COP<br>
+    Cripto: ${qty.toFixed(8)} ${$("symbolSelect").value.replace("USDT","")}<br>
+    Entrada: ${entry.toFixed(2)} USDT<br>
+    Actual: ${cur.toFixed(2)} USDT<br>
+    Resultado: ${res}% → ${parseInt(pl).toLocaleString()} COP
+  `;
+}
+setInterval(updateCalc,1000);
 
-    function openWS(sym,intv){
-      ws=new WebSocket(`wss://stream.binance.com:9443/ws/${sym.toLowerCase()}@kline_${intv}`);
-      ws.onopen=()=>{log('WS conectado');setStatus('online',closes.at(-1));};
-      ws.onclose=()=>{log('WS cerrado, reconectando...');showError("WS cerrado, reconectando...");setStatus('offline');setTimeout(()=>start(sym,intv),4000);};
-      ws.onerror=e=>{showError("Error WS: "+e.message);};
-      ws.onmessage=e=>{
-        const data=JSON.parse(e.data);
-        if(data.k){handleKline(data.k);}
-        if(data.k?.c){lastPrice=+data.k.c;}
-      };
-    }
+// Simulaciones
+function guardarSimulacion(){
+  const cop=parseFloat($("copAmount").value);
+  const trm=parseFloat($("trmInput").value);
+  if(!cop||!trm||!lastPrice){
+    alert("Completa TRM, monto COP y conecta primero.");
+    return;
+  }
+  const entry=lastPrice;
+  const qty=cop/(entry*trm);
+  const sim={id:Date.now(),cop,trm,entry,qty,symbol:$("symbolSelect").value};
+  simulaciones.unshift(sim);
+  if(simulaciones.length>10) simulaciones.pop();
+  localStorage.setItem("simulaciones",JSON.stringify(simulaciones));
+  renderSimulaciones();
+}
 
-    function handleKline(k){
-      const c={x:new Date(k.t),o:+k.o,h:+k.h,l:+k.l,c:+k.c};
-      if(lastKlineStart===null||k.t!==lastKlineStart){lastKlineStart=k.t;candles.push(c);closes.push(c.c);}else{candles[candles.length-1]=c;closes[closes.length-1]=c.c;}
-      if(candles.length>200){candles.shift();closes.shift();}
-      if(candles.length===1){lastPrice=c.c;}
-      detectSignals();
-      updateChart();setStatus('online',closes.at(-1));updateCalc();
-    }
+function renderSimulaciones(){
+  if(!simulaciones.length){
+    $("simList").innerText="No hay simulaciones";return;
+  }
+  $("simList").innerHTML=simulaciones.map(sim=>{
+    const cur=lastPrice||sim.entry;
+    const pl=((cur-sim.entry)/sim.entry*100).toFixed(2);
+    const plCop=((cur-sim.entry)*sim.qty*sim.trm).toFixed(0);
+    return `
+      <div style="margin-bottom:6px;border-bottom:1px solid #30363d;padding-bottom:4px">
+        <b>${sim.symbol}</b><br>
+        Entrada: ${sim.entry.toFixed(2)} USDT<br>
+        Inversión: ${sim.cop.toLocaleString()} COP<br>
+        Actual: ${cur.toFixed(2)} USDT<br>
+        Resultado: ${pl}% → ${parseInt(plCop).toLocaleString()} COP
+      </div>
+    `;
+  }).join("");
+}
+$("simulateBtn").onclick=guardarSimulacion;
+setInterval(renderSimulaciones,1000);
+renderSimulaciones();
 
-    function SMA(values,period){
-      if(values.length<period)return null;
-      const slice=values.slice(-period);
-      return slice.reduce((a,b)=>a+b,0)/period;
-    }
-    function detectSignals(){
-      const sma7=SMA(closes,7),sma25=SMA(closes,25);
-      if(!sma7||!sma25)return;
-      const prev7=SMA(closes.slice(0,-1),7),prev25=SMA(closes.slice(0,-1),25);
-      sma7Data.push({x:candles.at(-1).x,y:sma7});
-      sma25Data.push({x:candles.at(-1).x,y:sma25});
-      if(sma7Data.length>200)sma7Data.shift();
-      if(sma25Data.length>200)sma25Data.shift();
-      if(prev7 && prev25){
-        if(prev7<prev25 && sma7>prev25){
-          buySignals.push({x:candles.at(-1).x,y:candles.at(-1).c});
-          showToast("📢 Señal automática de COMPRA","buy");
-        }
-        if(prev7>prev25 && sma7<prev25){
-          sellSignals.push({x:candles.at(-1).x,y:candles.at(-1).c});
-          showToast("🚨 Señal automática de VENTA","sell");
-        }
-      }
-    }
+// Alertas manuales
+$("markBuy").onclick=()=>{buySignals.push({x:new Date(),y:lastPrice});updateChart();};
+$("markSell").onclick=()=>{sellSignals.push({x:new Date(),y:lastPrice});updateChart();};
 
-    function updateCalc(){
-      const cop=parseFloat($('copAmount').value),trm=parseFloat($('trmInput').value);
-      if(!cop||!trm||!(closes.length||lastPrice)){
-        $('calcResult').innerText='Completa TRM y monto COP';
-        return;
-      }
-      const cur=lastPrice||closes.at(-1);
-      const entry=parseFloat($('entryPrice').value)||cur;
-      const qty=cop/(cur*trm),pl=((cur-entry)/entry*100),plCop=(cur-entry)*qty*trm;
-      $('calcResult').innerText=
-        `Inversión: ${cop.toLocaleString()} COP\n`+
-        `Cripto: ${qty.toFixed(8)} ${$('symbolSelect').value.replace('USDT','')}\n`+
-        `Entrada: ${entry} USDT\nActual: ${cur} USDT\n`+
-        `Resultado: ${pl.toFixed(2)}% → ${plCop.toLocaleString()} COP`;
-    }
-
-    setInterval(updateCalc,1000);
-
-    $('connectBtn').onclick=()=>start($('symbolSelect').value,$('interval').value);
-    $('trmInput').oninput=()=>{localStorage.setItem('trmValue',$('trmInput').value);updateCalc();};
-    $('copAmount').oninput=updateCalc;$('entryPrice').oninput=updateCalc;
-
-    $('manualBuyBtn').onclick=()=>{
-      buySignals.push({x:candles.at(-1).x,y:candles.at(-1).c});
-      log('📢 Alerta MANUAL COMPRA');
-      updateChart();
-      showToast("📢 Señal de COMPRA","buy");
-    };
-
-    $('manualSellBtn').onclick=()=>{
-      sellSignals.push({x:candles.at(-1).x,y:candles.at(-1).c});
-      log('🚨 Alerta MANUAL VENTA');
-      updateChart();
-      showToast("🚨 Señal de VENTA","sell");
-    };
-
-    SYMBOLS.forEach(s=>{
-      const o=document.createElement('option');
-      o.value=s; o.textContent=s;
-      $('symbolSelect').appendChild(o);
-    });
-    $('symbolSelect').value='BTCUSDT';
-    if(localStorage.getItem('trmValue'))
-      $('trmInput').value=localStorage.getItem('trmValue');
-  </script>
+// Inicializar gráfico vacío
+initChart();
+</script>
 </body>
 </html>
